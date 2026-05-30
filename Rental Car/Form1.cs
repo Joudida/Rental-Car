@@ -1,13 +1,18 @@
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement.StartPanel;
-
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.TextBox;
 namespace Rental_Car
 {
     public partial class Form1 : Form
 
     {
+
         string userType = "";
         string savedUsername = "";
         string savedPassword = "";
+        private readonly HttpClient client = new HttpClient();
         public Form1()
         {
             InitializeComponent();
@@ -33,52 +38,154 @@ namespace Rental_Car
             tabControl1.SelectedTab = tab_Login;
         }
 
-        private void btnLogin_Click(object sender, EventArgs e)
+        private async void btnLogin_Click(object sender, EventArgs e)
         {
             string username = txtLoginUsername.Text;
             string password = txtLoginPassword.Text;
+
+            if (username == "" || password == "")
+            {
+                MessageBox.Show("Please enter username and password");
+                return;
+            }
+
             if (username == "admin" && password == "123")
             {
                 userType = "Admin";
                 MessageBox.Show("Welcome Admin");
+                txtLoginUsername.Clear();
+                txtLoginPassword.Clear();
+
                 tabControl1.SelectedTab = tabpageCar;
+                await LoadCarsFromApi();
 
                 btn_addcar.Visible = true;
                 btn_updatecar.Visible = true;
                 btn_deletecar.Visible = true;
 
-                dataGridViewCars.Rows.Clear();
-
+                await LoadCarsFromApi();
+                return;
             }
-            else if (username == savedUsername && password == savedPassword)
+
+            var loginData = new
+            {
+                id = 0,
+                fullName = "",
+                username = username,
+                password = password,
+                role = ""
+            };
+
+            string json = JsonSerializer.Serialize(loginData);
+
+            var content = new StringContent(
+                json,
+                Encoding.UTF8,
+                "application/json"
+            );
+
+            HttpResponseMessage response = await client.PostAsync(
+                "http://localhost:5051/api/Users/login",
+                content
+            );
+
+            if (response.IsSuccessStatusCode)
             {
                 userType = "Customer";
-                MessageBox.Show("Welcome Customer" + username);
+                MessageBox.Show("Welcome Customer " + username);
+                txtLoginUsername.Clear();
+                txtLoginPassword.Clear();
                 tabControl1.SelectedTab = tabpageCar;
-
+                await LoadCarsFromApi();
                 btn_addcar.Visible = false;
                 btn_updatecar.Visible = false;
                 btn_deletecar.Visible = false;
-               
-
+            }
+            else
+            {
+                MessageBox.Show("Invalid username or password");
             }
         }
-
-
-        private void Form1_Load(object sender, EventArgs e)
+        private async Task LoadCarsFromApi()
         {
-            dataGridViewCars.ColumnCount = 5;
-            dataGridViewCars.Columns[0].Name = "Brand";
-            dataGridViewCars.Columns[1].Name = "Model";
-            dataGridViewCars.Columns[2].Name = "Color";
-            dataGridViewCars.Columns[3].Name = "Price";
-            dataGridViewCars.Columns[4].Name = "Status";
+            try
+            {
+                HttpResponseMessage response =
+                    await client.GetAsync("http://localhost:5051/api/Cars");
 
-            dataGridViewCars.Rows.Add("Toyota", "Corolla", "White", "50$", "Available");
-            dataGridViewCars.Rows.Add("Honda", "Civic", "Black", "60$", "Available");
-            dataGridViewCars.Rows.Add("BMW", "X5", "Gray", "120$", "Booked");
+                string json = await response.Content.ReadAsStringAsync();
 
+               
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    MessageBox.Show("Failed to load cars");
+                    return;
+                }
+
+                List<CarDto> cars =
+                    JsonSerializer.Deserialize<List<CarDto>>(
+                        json,
+                        new JsonSerializerOptions
+                        {
+                            PropertyNameCaseInsensitive = true
+                        });
+
+               
+
+                dataGridViewCars.Rows.Clear();
+                txt_Search.Clear();
+
+                foreach (var car in cars)
+                {
+                    int rowIndex = dataGridViewCars.Rows.Add(
+                        car.Id,
+                        car.Brand,
+                        car.Model,
+                        car.Color,
+                        car.Price,
+                        car.Status
+                    );
+
+                    dataGridViewCars.Rows[rowIndex].Visible = true;
+                }
+
+                LoadCarsToCombo();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error: " + ex.Message);
+            }
         }
+        public class CarDto
+        {
+            public int Id { get; set; }
+            public string Brand { get; set; }
+            public string Model { get; set; }
+            public string Color { get; set; }
+            public decimal Price { get; set; }
+            public string Status { get; set; }
+        }
+
+
+        private async void Form1_Load(object sender, EventArgs e)
+
+        {
+            dataGridViewCars.Columns.Clear();
+            dataGridViewCars.ColumnCount = 6;
+
+            dataGridViewCars.Columns[0].Name = "Id";
+            dataGridViewCars.Columns[1].Name = "Brand";
+            dataGridViewCars.Columns[2].Name = "Model";
+            dataGridViewCars.Columns[3].Name = "Color";
+            dataGridViewCars.Columns[4].Name = "Price";
+            dataGridViewCars.Columns[5].Name = "Status";
+
+            dataGridViewCars.Columns[0].Visible = false;
+
+            await LoadCarsFromApi();
+        }
+
 
         private void btn_Search_Click(object sender, EventArgs e)
         {
@@ -86,61 +193,116 @@ namespace Rental_Car
 
             foreach (DataGridViewRow row in dataGridViewCars.Rows)
             {
-                if (row.Cells[0].Value != null)
-                {
-                    string brand = row.Cells[0].Value.ToString().ToLower();
+                if (row.IsNewRow) continue;
 
-                    if (brand.Contains(search))
-                    {
-                        row.Visible = true;
-                    }
-                    else
-                    {
-                        row.Visible = false;
-                    }
+                string brand = row.Cells[1].Value?.ToString().ToLower();
+
+                if (string.IsNullOrWhiteSpace(search))
+                {
+                    row.Visible = true;
+                }
+                else if (brand != null && brand.Contains(search))
+                {
+                    row.Visible = true;
+                }
+                else
+                {
+                    row.Visible = false;
                 }
             }
         }
 
-        private void btn_addcar_Click(object sender, EventArgs e)
+        private async void btn_addcar_Click(object sender, EventArgs e)
         {
             string brand = txtBrand.Text;
             string model = txtModel.Text;
             string color = txtColor.Text;
-            string price = txtPrice.Text;
+            string priceText = txtPrice.Text;
 
-
-            if (brand == "" || model == "" || color == "" || price == "")
+            if (brand == "" || model == "" || color == "" || priceText == "")
             {
                 MessageBox.Show("Please fill all fields");
+                return;
             }
-            else
+
+            decimal price = decimal.Parse(priceText);
+
+            var carData = new
             {
-                dataGridViewCars.Rows.Add(brand, model, color, price + "$", "Available");
+                id = 0,
+                brand = brand,
+                model = model,
+                color = color,
+                price = price,
+                status = "Available"
+            };
 
+            string json = JsonSerializer.Serialize(carData);
+
+            var content = new StringContent(
+                json,
+                Encoding.UTF8,
+                "application/json"
+            );
+
+            HttpResponseMessage response = await client.PostAsync(
+                "http://localhost:5051/api/Cars",
+                content
+            );
+
+            if (response.IsSuccessStatusCode)
+            {
                 MessageBox.Show("Car added successfully");
-
 
                 txtBrand.Clear();
                 txtModel.Clear();
                 txtColor.Clear();
                 txtPrice.Clear();
-            }
-            LoadCarsToCombo();
-        }
 
-        private void btn_deletecar_Click(object sender, EventArgs e)
-        {
-            if (dataGridViewCars.CurrentRow != null && !dataGridViewCars.CurrentRow.IsNewRow)
-            {
-                dataGridViewCars.Rows.RemoveAt(dataGridViewCars.CurrentRow.Index);
-                MessageBox.Show("Car deleted successfully");
+                await LoadCarsFromApi();
             }
             else
             {
-                MessageBox.Show("Please select a car to delete");
+                string error = await response.Content.ReadAsStringAsync();
+                MessageBox.Show("Add car failed: " + error);
             }
-            LoadCarsToCombo();
+        }
+
+        private async void btn_deletecar_Click(object sender, EventArgs e)
+        {
+            if (dataGridViewCars.CurrentRow == null ||
+                dataGridViewCars.CurrentRow.IsNewRow)
+            {
+                MessageBox.Show("Please select a car");
+                return;
+            }
+
+            int id = Convert.ToInt32(
+                dataGridViewCars.CurrentRow.Cells[0].Value
+            );
+
+            HttpResponseMessage response =
+                await client.DeleteAsync(
+                    "http://localhost:5051/api/Cars/" + id
+                );
+
+            if (response.IsSuccessStatusCode)
+            {
+                MessageBox.Show("Car deleted successfully");
+
+                await LoadCarsFromApi();
+                txtBrand.Clear();
+                txtModel.Clear();
+                txtColor.Clear();
+                txtPrice.Clear();
+            }
+            else
+            {
+                string error =
+                    await response.Content.ReadAsStringAsync();
+
+                MessageBox.Show("Delete failed: " + error);
+            }
         }
 
         private void dataGridViewCars_CellContentClick(object sender, DataGridViewCellEventArgs e)
@@ -151,76 +313,139 @@ namespace Rental_Car
             {
                 DataGridViewRow row = dataGridViewCars.Rows[e.RowIndex];
 
-                txtBrand.Text = row.Cells[0].Value.ToString();
-                txtModel.Text = row.Cells[1].Value.ToString();
-                txtColor.Text = row.Cells[2].Value.ToString();
-                txtPrice.Text = row.Cells[3].Value.ToString().Replace("$", "");
+                txtBrand.Text = row.Cells[1].Value.ToString();
+                txtModel.Text = row.Cells[2].Value.ToString();
+                txtColor.Text = row.Cells[3].Value.ToString();
+                txtPrice.Text = row.Cells[4].Value.ToString();
             }
 
 
         }
 
-        private void btn_updatecar_Click(object sender, EventArgs e)
+        private async void btn_updatecar_Click(object sender, EventArgs e)
         {
-            if (dataGridViewCars.SelectedRows.Count != null && !dataGridViewCars.CurrentRow.IsNewRow)
+            if (dataGridViewCars.CurrentRow == null || dataGridViewCars.CurrentRow.IsNewRow)
             {
-                DataGridViewRow row = dataGridViewCars.CurrentRow;
+                MessageBox.Show("Please select a car");
+                return;
+            }
 
-                row.Cells[0].Value = txtBrand.Text;
-                row.Cells[1].Value = txtModel.Text;
-                row.Cells[2].Value = txtColor.Text;
-                row.Cells[3].Value = txtPrice.Text + "$";
+            int id = Convert.ToInt32(dataGridViewCars.CurrentRow.Cells[0].Value);
 
+            var carData = new
+            {
+                id = id,
+                brand = txtBrand.Text,
+                model = txtModel.Text,
+                color = txtColor.Text,
+                price = decimal.Parse(txtPrice.Text),
+                status = dataGridViewCars.CurrentRow.Cells[5].Value.ToString()
+            };
+
+            string json = JsonSerializer.Serialize(carData);
+
+            var content = new StringContent(
+                json,
+                Encoding.UTF8,
+                "application/json"
+            );
+
+            HttpResponseMessage response = await client.PutAsync(
+                "http://localhost:5051/api/Cars/" + id,
+                content
+            );
+
+            if (response.IsSuccessStatusCode)
+            {
                 MessageBox.Show("Car updated successfully");
+
+                await LoadCarsFromApi();
             }
             else
             {
-                MessageBox.Show("Please select a car");
+                string error = await response.Content.ReadAsStringAsync();
+                MessageBox.Show("Update failed: " + error);
             }
         }
 
-        private void btn_Book_Click(object sender, EventArgs e)
+        private async void btn_Book_Click(object sender, EventArgs e)
         {
             if (cmbCars.SelectedItem == null)
             {
                 MessageBox.Show("Please select a car");
+                return;
             }
-            else
+
+            string selectedCar = cmbCars.SelectedItem.ToString();
+
+            foreach (DataGridViewRow row in dataGridViewCars.Rows)
             {
-                string selectedCar = cmbCars.SelectedItem.ToString();
+                if (row.IsNewRow) continue;
 
-                foreach (DataGridViewRow row in dataGridViewCars.Rows)
+                int carId = Convert.ToInt32(row.Cells[0].Value);
+                string brand = row.Cells[1].Value?.ToString();
+                string model = row.Cells[2].Value?.ToString();
+                string status = row.Cells[5].Value?.ToString();
+
+                string carName = brand + " " + model;
+
+                if (carName == selectedCar)
                 {
-                    string brand = row.Cells[0].Value?.ToString();
-                    string model = row.Cells[1].Value?.ToString();
-
-                    if (brand != null && model != null)
+                    if (status == "Booked")
                     {
-                        string carName = brand + " " + model;
-
-                        if (carName == selectedCar)
-                        {
-                            string status = row.Cells[4].Value == null ? "" : row.Cells[4].Value.ToString();
-
-                            if (status == "Booked")
-                            {
-                                MessageBox.Show("This car is already booked");
-                                return;
-                            }
-
-                            row.Cells[4].Value = "Booked";
-
-                            MessageBox.Show("Car booked successfully");
-
-                            LoadCarsToCombo();
-
-                            return;
-                        }
+                        MessageBox.Show("This car is already booked");
+                        return;
                     }
+
+                    if (dtEnd.Value <= dtStart.Value)
+                    {
+                        MessageBox.Show("End date must be after start date");
+                        return;
+                    }
+
+                    var bookingData = new
+                    {
+                        id = 0,
+                        userId = 1,
+                        carId = carId,
+                        startDate = dtStart.Value,
+                        endDate = dtEnd.Value,
+                    };
+
+                    string json = JsonSerializer.Serialize(bookingData);
+
+                    var content = new StringContent(
+                        json,
+                        Encoding.UTF8,
+                        "application/json"
+                    );
+
+                    HttpResponseMessage response = await client.PostAsync(
+                        "http://localhost:5051/api/Bookings",
+                        content
+                    );
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        MessageBox.Show("Car booked successfully");
+
+                        await LoadCarsFromApi();
+                        LoadCarsToCombo();
+                        cmbCars.SelectedIndex = -1;
+
+                    }
+                    else
+                    {
+                        string error = await response.Content.ReadAsStringAsync();
+                        MessageBox.Show("Booking failed: " + error);
+                    }
+
+                    return;
                 }
             }
-
         }
+
+        
 
         private void btn_Cancel_Click(object sender, EventArgs e)
         {
@@ -237,9 +462,9 @@ namespace Rental_Car
             {
                 if (row.IsNewRow) continue;
 
-                string brand = row.Cells[0].Value?.ToString();
-                string model = row.Cells[1].Value?.ToString();
-                string status = row.Cells[4].Value?.ToString();
+                string brand = row.Cells[1].Value?.ToString();
+                string model = row.Cells[2].Value?.ToString();
+                string status = row.Cells[5].Value?.ToString();
 
                 if (brand != null && model != null && status == "Available")
                 {
@@ -258,45 +483,65 @@ namespace Rental_Car
             LoadCarsToCombo();
         }
 
-        private void btn_Register_Click(object sender, EventArgs e)
+        private async void btn_Register_Click(object sender, EventArgs e)
         {
-       
             string fullname = txt_FullName.Text;
-            string username =txt_RegisterUsername.Text;
+            string username = txt_RegisterUsername.Text;
             string password = txt_RegisterPassword.Text;
             string confirm = txt_ConfirmPassword.Text;
 
-            
             if (fullname == "" || username == "" || password == "" || confirm == "")
             {
                 MessageBox.Show("Please fill all fields");
                 return;
             }
 
-            
             if (password != confirm)
             {
                 MessageBox.Show("Passwords do not match");
                 return;
             }
 
-            
-            savedUsername = username;
-            savedPassword = password;
+            var userData = new
+            {
+                id = 0,
+                fullName = fullname,
+                username = username,
+                password = password,
+                role = "Customer"
+            };
 
-            MessageBox.Show("Registered successfully");
+            string json = JsonSerializer.Serialize(userData);
 
-           
-            txt_FullName.Clear();
-            txt_RegisterUsername.Clear();
-            txt_RegisterPassword.Clear();
-            txt_ConfirmPassword.Clear();
+            var content = new StringContent(
+                json,
+                Encoding.UTF8,
+                "application/json"
+            );
 
-         
-            tabControl1.SelectedTab = tab_Login;
+            HttpResponseMessage response = await client.PostAsync(
+                "http://localhost:5051/api/Users/register",
+                content
+            );
+
+            if (response.IsSuccessStatusCode)
+            {
+                MessageBox.Show("Registered successfully");
+
+                txt_FullName.Clear();
+                txt_RegisterUsername.Clear();
+                txt_RegisterPassword.Clear();
+                txt_ConfirmPassword.Clear();
+
+                tabControl1.SelectedTab = tab_Login;
+            }
+            else
+            {
+                string error = await response.Content.ReadAsStringAsync();
+                MessageBox.Show("Register failed: " + error);
+            }
         }
-
     }
-    }
+}
 
 
